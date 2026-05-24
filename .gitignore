@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
+
+# 生成的交接包默认落 ~/Desktop/，但若 --out 到本目录则忽略
+trio-handoff-*.md
+*.local.md
