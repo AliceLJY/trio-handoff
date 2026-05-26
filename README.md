@@ -4,6 +4,11 @@ Bidirectional handoff bundles for two AI coding agents that review each other's 
 
 Built for the **trio** workflow (one human + two agents — e.g. Claude Code and Codex), where the agents take turns reviewing each other. Works for any pair of file-system agents that keep a session log.
 
+> **Scope note.** This repo publishes the *handoff bundle format and extractor*.
+> The full **trio protocol** itself (the CC + Codex + human triangulation workflow:
+> reverse-PM, blind-spot scanning, who-writes / who-reviews routing) is maintained
+> separately as a personal skill at `~/.claude/skills/trio/` — not in this repo.
+
 ## Why
 
 When agent A asks agent B to review its work, A usually hands over a diff and a one-line summary. B can't see what A already tried, what evidence A examined, or which approaches A deliberately rejected — so B keeps re-suggesting things A already ruled out.
@@ -63,6 +68,14 @@ The bundle opens with a review instruction:
 ## Requirements
 
 Python 3.8+, standard library only.
+
+## Versioning
+
+Current bundle format: **v2.2** (per `trio-handoff.py` source / latest commit).
+
+This repo publishes the handoff bundle format. The trio protocol itself
+(CC + Codex + human triangulation workflow) is maintained as a personal
+skill at `~/.claude/skills/trio/`.
 
 ## License
 
