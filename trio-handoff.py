@@ -384,6 +384,41 @@ def git_status(repo):
         return None
 
 
+def git_repo_anchor(repo):
+    """v1.10：repo 版本锚点。每个 repo 给一行 branch / HEAD / dirty / ahead-behind / remote，
+    避免 reviewer 二审时自己 git rev-parse + git status 补查。"""
+    try:
+        def run(args, timeout=10):
+            r = subprocess.run(["git", "-C", repo, *args],
+                               capture_output=True, text=True, timeout=timeout)
+            return r.stdout.strip() if r.returncode == 0 else ""
+
+        branch = run(["branch", "--show-current"]) or "(detached)"
+        head = run(["rev-parse", "--short", "HEAD"]) or "?"
+        porcelain = run(["status", "--porcelain"])
+        dirty_count = len(porcelain.splitlines()) if porcelain else 0
+        remote = run(["config", "remote.origin.url"]) or "(no remote)"
+
+        ahead, behind = "?", "?"
+        upstream_out = run(["rev-list", "--left-right", "--count", "@{u}...HEAD"])
+        if upstream_out:
+            parts = upstream_out.split()
+            if len(parts) == 2:
+                behind, ahead = parts[0], parts[1]
+
+        return {
+            "path": repo,
+            "branch": branch,
+            "head": head,
+            "dirty_count": dirty_count,
+            "ahead": ahead,
+            "behind": behind,
+            "remote": remote,
+        }
+    except Exception:
+        return None
+
+
 # ---------- 渲染（双向同构）----------
 
 PROMPTS = {
@@ -468,6 +503,30 @@ def render(data, direction, src_path, sub_paths, diffs, statuses):
             L.append(f"**repo: `{repo}`**\n```\n{s}\n```")
         L.append("")
 
+    # ===== v1.10：repo anchors（每个 repo 的版本锚点）=====
+    repo_paths = [r for r, _ in statuses] or [r for r, _ in diffs]
+    anchors = [git_repo_anchor(r) for r in repo_paths]
+    anchors = [a for a in anchors if a]
+    if anchors:
+        L.append("### repo anchors　[v1.10·自动抽取]")
+        L.append("> 二审 reviewer 需要的版本锚点；不抽 reviewer 每次都得自己 git rev-parse + git status。")
+        for a in anchors:
+            L.append(f"- `{a['path']}` — branch `{a['branch']}` @ `{a['head']}`　"
+                     f"dirty: {a['dirty_count']} files　ahead: {a['ahead']}　behind: {a['behind']}")
+            L.append(f"  remote: `{a['remote']}`")
+        L.append("")
+
+    # ===== v1.10：runtime surfaces checked（让 Caller 标注盲区）=====
+    L.append("### runtime surfaces checked　[v1.10·Caller 标注·自动抽不到]")
+    L.append("> 二审最常被反问的「调度/暴露面」——以下 surface 是否查过？")
+    L.append("> 查过填 ✓ + 一行结论；没查就留 `_未查_`，让 reviewer 知道这是已知盲区而非疏漏。")
+    L.append("- cron / launchd / systemd timers: _未查_")
+    L.append("- MCP tools registered: _未查_")
+    L.append("- API routes / HTTP endpoints: _未查_")
+    L.append("- boot / startup hooks / login items: _未查_")
+    L.append("- package.json / pyproject.toml scripts: _未查_")
+    L.append("")
+
     L.append("### public statements　[已说出口的，非思维链]")
     if data["asst"]:
         L.extend(f"> {tx}\n" for tx in dedupe(data["asst"]))
@@ -485,6 +544,12 @@ def render(data, direction, src_path, sub_paths, diffs, statuses):
     L.append("### unresolved questions\n<!-- -->\n")
     L.append(f"### review focus\n<!-- 想让 {other} 重点判断什么，别让它用通用 review 模式泛泛扫 -->\n")
     L.append("### do-not-repeat unless new evidence\n<!-- 已经否掉、不要再提的建议 -->\n")
+    L.append("### confidence / evidence gap　[v1.10]\n"
+             "<!-- 每个核心判断的置信度 + 没全量验证的部分。让 reviewer 知道哪里是强判断哪里是风险区。\n"
+             "格式例：\n"
+             "- claim X：高 / 已源码验证\n"
+             "- claim Y：中 / 只 grep 了一处，未全量\n"
+             "- claim Z：低 / 推论未验证，期待 reviewer 补 -->\n")
     L.append("---\n")
 
     L.append("## Drill-down（下钻入口）")
