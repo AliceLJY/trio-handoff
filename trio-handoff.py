@@ -433,6 +433,30 @@ PROMPTS = {
 }
 
 
+# ---------- 脱敏（移植自 constant alembic::redact, MIT；2026-06-08 借鉴审计）----------
+# 交接包会发给另一方 + 落 ~/Desktop/，diff / 命令输出 / remote url 都可能夹带 secret。
+# 顺序重要：具体 token 形状在前，通用 key=value 在后。
+# 接受 over-redaction：宁可黑掉合法的 a@b.com / "token: x"，也不把凭证带过边界（constant M4 取舍）。
+_REDACTORS = [
+    (re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"), "[redacted-email]"),
+    (re.compile(r"\bsk-[A-Za-z0-9_-]{16,}\b"), "[redacted-key]"),
+    (re.compile(r"\bgh[pousr]_[A-Za-z0-9]{16,}\b"), "[redacted-token]"),
+    (re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b"), "[redacted-token]"),
+    (re.compile(r"""(?i)(["']authorization["']\s*[:=]\s*["'])[^"']*(["'])"""), r"\g<1>[redacted]\g<2>"),
+    (re.compile(r"(?i)(\bauthorization\b\s*[:=]\s*).*"), r"\g<1>[redacted]"),
+    (re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]+"), "Bearer [redacted]"),
+    (re.compile(r"(?i)\b(api[_-]?key|token|secret|password|authorization|bearer)\b(\s*[:=]\s*)\S+"), r"\g<1>\g<2>[redacted]"),
+]
+
+
+def redact(text):
+    """移植自 constant alembic::redact（思路源 inmzhang/transession, MIT）。
+    交接包跨边界发送 + 落盘，必须烧掉 secret；接受 over-redaction。"""
+    for pat, repl in _REDACTORS:
+        text = pat.sub(repl, text)
+    return text
+
+
 def render(data, direction, src_path, sub_paths, diffs, statuses):
     src = "CC JSONL" if direction == "cc-to-codex" else "Codex rollout"
     L = [f"# Trio Handoff　[{direction}]"]
@@ -556,7 +580,7 @@ def render(data, direction, src_path, sub_paths, diffs, statuses):
     L.append(f"- 原始 log：`{src_path}`")
     for p in sub_paths:
         L.append(f"- 子 agent：`{p}`")
-    return "\n".join(L)
+    return redact("\n".join(L))
 
 
 # ---------- 方向 / 源检测 ----------
