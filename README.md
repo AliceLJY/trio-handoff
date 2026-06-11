@@ -49,20 +49,25 @@ Same bundle structure; only the extractor differs — because the two agents obs
 ./trio-handoff.py --last-n 3               # only the last 3 user turns
 ./trio-handoff.py --include-subagents      # include subagent traces (cc-to-codex)
 ./trio-handoff.py --repo ~/code/project    # where to run git diff / status
+./trio-handoff.py --base origin/main       # diff baseline (include committed changes)
 ./trio-handoff.py --out /path/bundle.md    # output path (default ~/Desktop/)
+./trio-handoff.py --check bundle.md        # pre-send self-check: is the Caller Declaration still blank?
+./trio-handoff.py --allow-empty            # generate even if extraction came up empty (refused by default)
 ```
 
-Output is a Markdown bundle (default in `~/Desktop/`). **Fill in the Caller Declaration before sending.** Hand the path to the reviewing agent — it reads the bundle for guidance and can drill down into the raw log path at the bottom to verify any claim, so it never has to trust the compression blindly.
+"Latest session" is picked by the **timestamp inside the JSONL**, not file mtime (bridge/patch processes batch-refresh mtimes, making them a lottery), and Claude sessions are searched across **all** `~/.claude/projects/*/` subdirectories (sessions scatter by cwd). After picking, the tool prints the session's first user message so you can eyeball that it grabbed the right one — if not, rerun with an explicit source path. If extraction yields nothing (wrong source, format drift), the tool refuses to emit a hollow bundle.
+
+Output is a Markdown bundle (default in `~/Desktop/`). **Fill in the Caller Declaration before sending**, then run `--check` on the bundle — it exits non-zero while `rejected alternatives` is still blank. Hand the path to the reviewing agent — it reads the bundle for guidance and can drill down into the raw log path at the bottom to verify any claim, so it never has to trust the compression blindly.
 
 The bundle opens with a review instruction:
 
-> Read this bundle; extract goal / evidence / rejected-alternatives / diff; then review. Don't repeat suggestions already ruled out unless you can point to new evidence.
+> First verify the repo anchors (run the embedded verify commands — the docs may be stale, command output isn't). Then check the Caller Declaration — if it's still a blank template, bounce the bundle back instead of reviewing half a handoff. Then extract goal / evidence / rejected-alternatives / diff and review. Don't repeat suggestions already ruled out unless you can point to new evidence.
 
 ## Config
 
 | env | default |
 |---|---|
-| `TRIO_CC_DIR` | auto from `$HOME` (`~/.claude/projects/-Users-<you>`) |
+| `TRIO_CC_DIR` | `~/.claude/projects` (scanned two levels deep; may also point at one project subdir) |
 | `TRIO_CODEX_GLOB` | `~/.codex/sessions/*/*/*/rollout-*.jsonl` |
 
 ## Requirements
@@ -71,7 +76,12 @@ Python 3.8+, standard library only.
 
 ## Versioning
 
-Current bundle format: **v2.2** (per `trio-handoff.py` source / latest commit).
+Two version tracks (they evolve independently):
+
+- **Tool release**: git tag, currently **v2.4.0** — extractor / CLI behavior.
+- **Bundle template**: currently **v1.11** — the bundle's section layout. Fields carry
+  `[v1.x]` markers for the template version that introduced them (e.g. repo anchors'
+  verify lines are v1.11; runtime surfaces and confidence are v1.10).
 
 This repo publishes the handoff bundle format. The trio protocol itself
 (CC + Codex + human triangulation workflow) is maintained as a personal
