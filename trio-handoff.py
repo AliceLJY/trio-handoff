@@ -33,9 +33,11 @@
     trio-handoff.py <path>                   # 显式源文件，方向自动检测
     trio-handoff.py --last-n 3               # 只保留最近 3 个用户回合（两个方向都生效）
     trio-handoff.py --include-subagents      # （CC 方向）连带子 agent 轨迹
-    trio-handoff.py --repo ~/Projects/foo    # 指定 repo（默认从改动文件 / cwd 推断，支持多 repo）
+    trio-handoff.py --repo ~/Projects/foo    # 指定 repo（默认从改动文件 / workdir / cwd 推断，支持多 repo）
     trio-handoff.py --base origin/main       # diff 对比基线（含已 commit 的改动）
     trio-handoff.py --out /path/x.md         # 指定输出（默认 ~/Desktop/）
+    trio-handoff.py --check <bundle.md>      # 发出前自查：Caller Declaration 是否仍是空模板
+    trio-handoff.py --allow-empty            # 抽取结果为空时仍生成（默认拒绝生成空壳包）
 """
 import argparse
 import glob
@@ -44,14 +46,18 @@ import os
 import re
 import shlex
 import subprocess
+import sys
 from datetime import datetime
 
-CC_DIR = os.environ.get("TRIO_CC_DIR") or (
+# CC session 按 cwd 散落在 ~/.claude/projects/ 的不同子目录（全局聊在 -Users-<you>/，
+# repo 内会话在 -Users-<you>-Projects-<repo>/）——只盯一个子目录会系统性漏源。
+# TRIO_CC_DIR 兼容旧语义：可指向 projects 根，也可指向具体子目录（两层 glob 都扫）。
+CC_PROJECTS = os.environ.get("TRIO_CC_DIR") or os.path.expanduser("~/.claude/projects")
+CC_DIR = (  # 根 project 目录（subagents 定位仍按此推）
     lambda b, c: c if os.path.isdir(c) else b
 )(
-    os.path.expanduser("~/.claude/projects"),
-    os.path.join(os.path.expanduser("~/.claude/projects"),
-                 os.path.expanduser("~").replace("/", "-")),
+    CC_PROJECTS,
+    os.path.join(CC_PROJECTS, os.path.expanduser("~").replace("/", "-")),
 )
 CODEX_GLOB = os.environ.get("TRIO_CODEX_GLOB") or os.path.expanduser(
     "~/.codex/sessions/*/*/*/rollout-*.jsonl"
@@ -83,7 +89,8 @@ HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.S)
 # ---------- 通用工具 ----------
 
 def blank():
-    return dict(goal=[], examined=[], external=[], commands=[], changed=[], asst=[])
+    return dict(goal=[], examined=[], external=[], commands=[], changed=[], asst=[],
+                workdirs=[])
 
 
 def merge(a, b):
@@ -140,6 +147,13 @@ def clean_output(s, limit=MAX_CMD_OUTPUT):
     return f"{s[:half]}\n…[truncated {len(s) - limit} chars]…\n{s[-half:]}"
 
 
+# 裸文件名（无路径分隔符）靠扩展名识别，否则 `sed -n 1,80p README.md` 不入 files examined，
+# 低估 Codex 真实阅读面
+_FILE_EXT_RE = re.compile(
+    r"\.(py|md|ts|tsx|js|jsx|json|toml|yaml|yml|sh|txt|html|css|rs|go|java|rb|c|h|cpp|sql|cfg|ini|lock)$",
+    re.I)
+
+
 def read_paths_from_cmd(cmd):
     """从 shell 读取类命令反推被读的文件路径（Codex 没有独立 Read 工具）。"""
     try:
@@ -151,18 +165,22 @@ def read_paths_from_cmd(cmd):
     tool = os.path.basename(parts[0])
     if tool not in READ_CMDS:
         return []
-    return [p for p in parts[1:] if "/" in p and not p.startswith("-")]
+    return [p for p in parts[1:]
+            if not p.startswith("-") and ("/" in p or _FILE_EXT_RE.search(p))]
 
 
 def load_rows(path):
-    rows = []
+    """返回 (rows, malformed 行数)。坏行不再纯静默——格式漂移时调用方能看见信号。"""
+    rows, bad = [], 0
     with open(path) as fh:
         for line in fh:
+            if not line.strip():
+                continue
             try:
                 rows.append(json.loads(line))
             except json.JSONDecodeError:
-                pass
-    return rows
+                bad += 1
+    return rows, bad
 
 
 def slice_last_n(rows, n, kind):
@@ -313,6 +331,8 @@ def parse_codex(rows, origin="codex"):
                 if SELF_MARKER in cmd:
                     continue  # 过滤生成器自身命令（防自污染）
                 wd = args.get("workdir", "")
+                if wd:
+                    out["workdirs"].append(wd)  # apply_patch 常是相对路径，repo 定位靠 workdir 兜底
                 out["commands"].append(
                     (cmd, f"workdir={wd}" if wd else "", clean_output(res), origin))
                 for fp in read_paths_from_cmd(cmd):   # 读取类命令 → 反推检查过的文件
@@ -339,8 +359,12 @@ def _git_root(start):
     return None
 
 
-def collect_repos(changed, repo_arg):
-    """收集所有改动文件涉及的 git repo（跨 repo 改动全都要 diff）；都没有则 fallback 到 cwd。"""
+def collect_repos(changed, repo_arg, workdirs=None):
+    """收集所有改动文件涉及的 git repo（跨 repo 改动全都要 diff）。
+    推断顺序：--repo > 改动文件绝对路径向上爬 > exec workdir（Codex apply_patch
+    常用相对路径，dirname 爬不到 .git，workdir 是它真正的落点）> cwd fallback。
+    cwd fallback 在"不在目标 repo 里跑生成器"时会 diff 错 repo——所以 main 里
+    必须把最终 repo 列表打出来让调用方确认。"""
     if repo_arg:
         return [os.path.expanduser(repo_arg)]
     repos = []
@@ -352,6 +376,11 @@ def collect_repos(changed, repo_arg):
                     repos.append(d)
                 break
             d = os.path.dirname(d)
+    if not repos and workdirs:
+        for wd in dedupe(workdirs):
+            root = _git_root(os.path.expanduser(wd))
+            if root and root not in repos:
+                repos.append(root)
     if not repos:
         root = _git_root(os.getcwd())
         if root:
@@ -422,12 +451,18 @@ def git_repo_anchor(repo):
 # ---------- 渲染（双向同构）----------
 
 PROMPTS = {
-    "cc-to-codex": "Codex，请先读这个交接包，重点提取：① 目标和约束 ② CC 已检查过的证据 "
-                   "③ CC 已否掉的方案 ④ 当前 diff。然后再 review。"
+    "cc-to-codex": "Codex，请先读这个交接包。**第一动作**：跑 repo anchors 段的 verify 命令核对现实"
+                   "——不符说明 bundle 生成后 repo 已变动，本包 diff/状态不可信，停止 review 并要求重新生成。"
+                   "**第二动作**：检查文末 Caller Declaration——若仍是空模板（只有注释占位、"
+                   "rejected alternatives 无内容），先打回要求填写再 review，不要基于半份交接开工。"
+                   "然后提取：① 目标和约束 ② CC 已检查过的证据 ③ CC 已否掉的方案 ④ 当前 diff。"
                    "**不要重复提出 CC 已明确否掉的建议，除非你能指出新的证据。**"
                    "如需核实可下钻文末原始 log，不必盲信本包的压缩。",
-    "codex-to-cc": "CC，请先读这个交接包，重点提取：① 目标和约束 ② Codex 已检查过的证据 "
-                   "③ Codex 已否掉的方案 ④ 当前 diff/状态。然后再 review。"
+    "codex-to-cc": "CC，请先读这个交接包。**第一动作**：跑 repo anchors 段的 verify 命令核对现实"
+                   "——不符说明 bundle 生成后 repo 已变动，本包 diff/状态不可信，停止 review 并要求重新生成。"
+                   "**第二动作**：检查文末 Caller Declaration——若仍是空模板（只有注释占位、"
+                   "rejected alternatives 无内容），先打回要求填写再 review，不要基于半份交接开工。"
+                   "然后提取：① 目标和约束 ② Codex 已检查过的证据 ③ Codex 已否掉的方案 ④ 当前 diff/状态。"
                    "**不要重复提出 Codex 已明确否掉的建议，除非你能指出新的证据。**"
                    "如需核实可下钻文末原始 log，不必盲信本包的压缩。",
 }
@@ -532,12 +567,16 @@ def render(data, direction, src_path, sub_paths, diffs, statuses):
     anchors = [git_repo_anchor(r) for r in repo_paths]
     anchors = [a for a in anchors if a]
     if anchors:
-        L.append("### repo anchors　[v1.10·自动抽取]")
-        L.append("> 二审 reviewer 需要的版本锚点；不抽 reviewer 每次都得自己 git rev-parse + git status。")
+        L.append("### repo anchors　[v1.11·自动抽取]")
+        L.append("> 二审 reviewer 需要的版本锚点。**reviewer 第一动作：跑下面每条 verify 核对现实**"
+                 "——文档可能过时，命令输出不会。")
         for a in anchors:
             L.append(f"- `{a['path']}` — branch `{a['branch']}` @ `{a['head']}`　"
                      f"dirty: {a['dirty_count']} files　ahead: {a['ahead']}　behind: {a['behind']}")
             L.append(f"  remote: `{a['remote']}`")
+            L.append(f"  verify: `git -C {a['path']} log --oneline -1` → 预期 `{a['head']}`；"
+                     f"`git -C {a['path']} status --porcelain | wc -l` → 预期 {a['dirty_count']}。"
+                     f"不符 → bundle 生成后 repo 已变动，本包 diff/状态不可信，要求重新生成")
         L.append("")
 
     # ===== v1.10：runtime surfaces checked（让 Caller 标注盲区）=====
@@ -583,6 +622,44 @@ def render(data, direction, src_path, sub_paths, diffs, statuses):
     return redact("\n".join(L))
 
 
+# ---------- 发出前自查（--check）----------
+
+def check_bundle(path):
+    """检查 bundle 的 Caller Declaration 是否仍是空模板。
+    rejected alternatives 为空 → exit 1（实测结论：这栏空着发出去整套交接白做）；
+    其他栏空只警告。这是发送方的最后一道 gate，对应 Review 指令里 reviewer 侧的打回。"""
+    try:
+        text = open(os.path.expanduser(path)).read()
+    except OSError as e:
+        print(f"✗ 读不到 bundle: {e}")
+        return 2
+    # 行首锚定 + 取最后一次出现：bundle 的 diff / 命令输出里可能嵌同样的字符串
+    # （比如交接的改动恰好是 markdown 或本工具自身源码），声明区永远在尾部
+    idx = text.rfind("\n## Caller Declaration")
+    if idx < 0:
+        print("✗ 找不到 Caller Declaration 段——这不是 trio-handoff bundle？")
+        return 2
+    body = text[idx + 1:].split("\n## ", 1)[0]
+    empty = []
+    for chunk in re.split(r"^### ", body, flags=re.M)[1:]:
+        title, _, rest = chunk.partition("\n")
+        content = HTML_COMMENT_RE.sub("", rest)
+        content = re.sub(r"^-+\s*$", "", content, flags=re.M).strip()
+        if not content:
+            empty.append(title.strip())
+    if not empty:
+        print("✓ Caller Declaration 已填写，可以发出")
+        return 0
+    print("✗ Caller Declaration 未填字段：")
+    for e in empty:
+        print(f"  - {e}")
+    if any("rejected" in e for e in empty):
+        print("→ rejected alternatives 空着 = 这套交接白做（实测结论）。先填再发。")
+        return 1
+    print("→ 命门 rejected alternatives 已填；建议补齐其余字段再发。")
+    return 0
+
+
 # ---------- 方向 / 源检测 ----------
 
 def detect_kind(path):
@@ -602,10 +679,80 @@ def detect_kind(path):
     return "cc"
 
 
-def latest(pattern_or_dir):
-    fs = (glob.glob(os.path.join(pattern_or_dir, "*.jsonl"))
-          if os.path.isdir(pattern_or_dir) else glob.glob(pattern_or_dir))
-    return max(fs, key=os.path.getmtime) if fs else None
+def _jsonl_last_ts(path, tail_bytes=8192):
+    """读文件尾部若干字节，取最后一条带 timestamp 的行。失败返回 None。"""
+    try:
+        with open(path, "rb") as fh:
+            fh.seek(0, 2)
+            size = fh.tell()
+            fh.seek(max(0, size - tail_bytes))
+            chunk = fh.read().decode("utf-8", "replace")
+        for line in reversed(chunk.splitlines()):
+            try:
+                o = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(o, dict) and o.get("timestamp"):
+                return str(o["timestamp"])
+    except Exception:
+        pass
+    return None
+
+
+def latest(pattern_or_dir, kind="cc"):
+    """选"最近活跃"的 session。
+
+    不能只按 mtime：bridge / patch 进程会批量刷新 jsonl 的 mtime，多 bot 并发时
+    最新 N 个文件 mtime 完全相同，max(mtime) 退化成抽签。
+    做法：mtime 粗筛 top-N（真·最新文件的 mtime 必然也在最前），再按 jsonl 内部
+    末条 timestamp 精排。CC 方向额外扫 projects/*/ 全部子目录（session 按 cwd 散落）。"""
+    if os.path.isdir(pattern_or_dir):
+        fs = glob.glob(os.path.join(pattern_or_dir, "*.jsonl"))
+        if kind == "cc":  # repo 内会话落在子目录，必须两层都扫
+            fs += glob.glob(os.path.join(pattern_or_dir, "*", "*.jsonl"))
+    else:
+        fs = glob.glob(pattern_or_dir)
+    if not fs:
+        return None
+    candidates = sorted(fs, key=os.path.getmtime, reverse=True)[:200]
+    ranked = []
+    for f in candidates:
+        ts = _jsonl_last_ts(f)
+        if ts:
+            ranked.append((ts, f))
+    if ranked:
+        ranked.sort(reverse=True)  # ISO 时间戳字符串可直接比较
+        return ranked[0][1]
+    return candidates[0]  # 都解析不出 timestamp 时退回 mtime 序
+
+
+def first_user_snippet(path, kind, limit=160):
+    """源文件首条真实用户输入的摘要——给调用方一眼确认选源没选错。"""
+    try:
+        with open(path) as fh:
+            for i, line in enumerate(fh):
+                if i > 400:
+                    break
+                try:
+                    o = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if kind == "cc":
+                    if o.get("type") == "user":
+                        c = (o.get("message") or {}).get("content")
+                        if isinstance(c, str) and not is_noise_user_text(c):
+                            t = clean_user_text(c)
+                            if t:
+                                return t[:limit].replace("\n", " ")
+                else:
+                    p = o.get("payload") or o
+                    if isinstance(p, dict) and p.get("type") == "user_message":
+                        m = p.get("message", "")
+                        if m.strip() and not is_noise_user_text(m):
+                            return m.strip()[:limit].replace("\n", " ")
+    except Exception:
+        pass
+    return "（未捕获到用户输入）"
 
 
 def main():
@@ -615,10 +762,18 @@ def main():
                     help="方向（默认从源自动检测，再默认 cc-to-codex）")
     ap.add_argument("--last-n", type=int, default=0, help="只保留最近 N 个用户回合（两方向通用）")
     ap.add_argument("--include-subagents", action="store_true", help="（CC 方向）带子 agent 轨迹")
-    ap.add_argument("--repo", help="指定 repo（默认从改动文件 / cwd 推断，支持多 repo）")
+    ap.add_argument("--repo", help="指定 repo（默认从改动文件 / workdir / cwd 推断，支持多 repo）")
     ap.add_argument("--base", help="diff 对比基线，如 origin/main（含已 commit 的改动）")
     ap.add_argument("--out", help="输出路径（默认 ~/Desktop/）")
+    ap.add_argument("--check", metavar="BUNDLE",
+                    help="发出前自查：Caller Declaration 是否仍是空模板（rejected 空则 exit 1）")
+    ap.add_argument("--allow-empty", action="store_true",
+                    help="抽取结果为空时仍生成 bundle（默认拒绝生成空壳包）")
     args = ap.parse_args()
+
+    # 0) --check 模式：只做发出前自查
+    if args.check:
+        sys.exit(check_bundle(args.check))
 
     # 1) 定源 + 方向
     if args.source:
@@ -629,27 +784,45 @@ def main():
             "codex-to-cc" if detect_kind(src) == "codex" else "cc-to-codex")
     else:
         direction = args.direction or "cc-to-codex"
-        src = latest(CC_DIR) if direction == "cc-to-codex" else latest(CODEX_GLOB)
+        src = (latest(CC_PROJECTS, "cc") if direction == "cc-to-codex"
+               else latest(CODEX_GLOB, "codex"))
         if not src:
             ap.error("找不到默认源，请显式传 source 路径")
     kind = "cc" if direction == "cc-to-codex" else "codex"
     print(f"方向: {direction}\n源: {src}")
+    # 选源确认：多 bot / 多窗口并发时"最近 session"可能不是你想交接的那个——
+    # 给一行首条输入摘要让调用方一眼核对，选错就显式传 source 路径重跑
+    print(f"  末条时间: {_jsonl_last_ts(src) or '?'}")
+    print(f"  首条输入: {first_user_snippet(src, kind)}")
 
     # 2) 解析（last-n 两方向通用）
-    rows = slice_last_n(load_rows(src), args.last_n, kind)
+    all_rows, bad = load_rows(src)
+    rows = slice_last_n(all_rows, args.last_n, kind)
     if kind == "cc":
         data = parse_cc(rows)
         sub_paths = []
         if args.include_subagents:
             sub_paths = cc_subagents(src)
             for sp in sub_paths:
-                data = merge(data, parse_cc(slice_last_n(load_rows(sp), args.last_n, "cc"), "sub"))
+                sub_rows, sub_bad = load_rows(sp)
+                bad += sub_bad
+                data = merge(data, parse_cc(slice_last_n(sub_rows, args.last_n, "cc"), "sub"))
     else:
         data = parse_codex(rows)
         sub_paths = []
+    if bad:
+        print(f"⚠️  源文件含 {bad} 行无法解析的 JSON——若数量异常大，session 格式可能已漂移")
 
-    # 3) repo 信息（多 repo + cwd fallback + 可选 base）
-    repos = collect_repos(data["changed"], args.repo)
+    # 2.5) 空壳门：抽不出任何核心证据时拒绝生成（静默空壳比显式失败更坏）
+    if not (dedupe(data["goal"]) or data["commands"] or dedupe(data["changed"])) \
+            and not args.allow_empty:
+        print("✗ 抽取结果为空（goal / commands / changed 均无）：源可能选错、--last-n 过小、"
+              "或 session 格式已漂移。")
+        print("  确认就要生成空包 → 加 --allow-empty；选错源 → 显式传 source 路径。")
+        sys.exit(2)
+
+    # 3) repo 信息（多 repo + workdir 兜底 + cwd fallback + 可选 base）
+    repos = collect_repos(data["changed"], args.repo, data.get("workdirs"))
     diffs = [(r, git_diff(r, args.base)) for r in repos]
     statuses = [(r, git_status(r)) for r in repos]
 
@@ -666,7 +839,13 @@ def main():
           f"| external {len(dedupe(data['external']))} | commands {len(data['commands'])} "
           f"| changed {len(dedupe(data['changed']))} | repos {len(repos)} "
           f"| diff {'有' if has_diff else '无'}")
+    if repos:
+        for r in repos:
+            print(f"  repo: {r}")
+    else:
+        print("  repo: （未定位到——改动若在某 repo 内请用 --repo 指定后重跑）")
     print("⚠️  发出前务必手填 Caller Declaration（尤其 rejected alternatives）——空着这套交接白做。")
+    print(f"   填完自查: trio-handoff.py --check {out}")
 
 
 if __name__ == "__main__":
