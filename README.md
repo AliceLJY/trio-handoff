@@ -27,6 +27,8 @@ rejected alternatives + why · why this framing / approach · unresolved questio
 
 **The declared half is the valuable half.** Rejected alternatives and design rationale often live only in the author's head — they never become an observable action, so no script can extract them. They must be declared. And that declared half is exactly what stops the reviewer from repeating ruled-out suggestions.
 
+![Example bundle (illustrative) — the auto-extracted "Objective Evidence" half sits above the hand-written "Caller Declaration" half.](docs/assets/trio-handoff-bundle-example.png)
+
 ## Hidden reasoning is never shared
 
 Claude's `thinking` and Codex's `reasoning` are excluded by design. A hidden chain of thought contains discarded mid-thoughts and isn't verifiable; a reviewer should anchor on observable evidence, not the author's inner monologue. "Full trace" here means the observable **work** trace (what was read / run / changed) — not the raw chain of thought.

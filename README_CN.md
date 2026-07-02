@@ -27,6 +27,8 @@ Cognition 的 [*Don't Build Multi-Agents*](https://cognition.ai/blog/dont-build-
 
 **手写的那半才是最值钱的。** 否掉的方案和设计理由常常只存在作者脑子里——它们从没变成一个可观察的动作,所以任何脚本都抽不出来,必须主动声明。而这手写的一半,恰恰是阻止 reviewer 重复提你早否掉的建议的关键。
 
+![示例 bundle（说明性）—— 上半段是自动抽取的 Objective Evidence，下半段是手写的 Caller Declaration。](docs/assets/trio-handoff-bundle-example.png)
+
 ## 隐藏思维链绝不传
 
 Claude 的 `thinking` 和 Codex 的 `reasoning` 按设计排除。隐藏的思维链里含被废弃的中间想法、且不可验证;reviewer 该锚定在可观察的证据上,而不是作者的内心独白。这里说的"完整轨迹"指**可观察的工作轨迹**(读了什么 / 跑了什么 / 改了什么),不是原始思维链。
