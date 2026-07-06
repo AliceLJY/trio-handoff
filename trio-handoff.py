@@ -468,6 +468,18 @@ PROMPTS = {
 }
 
 
+# ---------- Execution Boundary（固定纪律，借鉴 repo-harness contract-run EXECUTION_BOUNDARY，2026-07-06）----------
+# 接收方执行/审阅本交接时的行为边界。固定文本、非手填——每份 bundle 都印，防被派方自作主张扩 scope 镀金。
+# 对应 Alice CLAUDE.md「只写已完成 / 不 gold-plate」，把它前置到派活那一刻。源：Ancienttwo/repo-harness contract-run.ts:67-75。
+EXECUTION_BOUNDARY = (
+    "> 接收方执行或审阅本交接时守这条边界：\n"
+    "> - **缺失的需求 = 禁区，不是改进许可。** 只做本包 goal / in-scope / allowed paths 之内的事。\n"
+    "> - 不加未被请求的 feature / 迁移 / 兼容层 / telemetry / 顺手重构。\n"
+    "> - 发现「顺手能做」的额外工作 → 只记录、交回请求方决定，不自行执行。\n"
+    "> - 要靠扩大 scope 才能完成 → 停下，点名缺的决策，不自作主张填空。"
+)
+
+
 # ---------- 脱敏（移植自 constant alembic::redact, MIT；2026-06-08 借鉴审计）----------
 # 交接包会发给另一方 + 落 ~/Desktop/，diff / 命令输出 / remote url 都可能夹带 secret。
 # 顺序重要：具体 token 形状在前，通用 key=value 在后。
@@ -500,6 +512,9 @@ def render(data, direction, src_path, sub_paths, diffs, statuses):
         L.append(f"> 含 {len(sub_paths)} 个子 agent 轨迹")
     L.append("\n## Review 指令")
     L.append(PROMPTS[direction])
+
+    L.append("\n## Execution Boundary　[固定纪律·接收方执行或审阅时守]")
+    L.append(EXECUTION_BOUNDARY)
     L.append("\n---\n")
 
     # ===== Objective Evidence =====
@@ -613,6 +628,13 @@ def render(data, direction, src_path, sub_paths, diffs, statuses):
              "- claim X：高 / 已源码验证\n"
              "- claim Y：中 / 只 grep 了一处，未全量\n"
              "- claim Z：低 / 推论未验证，期待 reviewer 补 -->\n")
+    L.append("### falsifier / cheapest disproof　[v1.12·brief 完整性]\n"
+             "<!-- 什么证据或最小实验能最快证明这个方向错了？先验证哪一步最便宜？对抗谄媚和方向跑偏。 -->\n")
+    L.append("### exit criteria (machine-checkable)　[v1.12·brief 完整性]\n"
+             "<!-- 完成的客观判据，尽量写成可跑命令 / 可核验清单，别用「感觉可以」。\n"
+             "格式例：\n"
+             "- `pytest tests/ -q` 全绿\n"
+             "- `grep -c TODO file` 返回 0 -->\n")
     L.append("---\n")
 
     L.append("## Drill-down（下钻入口）")
@@ -647,16 +669,27 @@ def check_bundle(path):
         content = re.sub(r"^-+\s*$", "", content, flags=re.M).strip()
         if not content:
             empty.append(title.strip())
-    if not empty:
-        print("✓ Caller Declaration 已填写，可以发出")
+
+    # v1.12：brief 完整性——Objective Evidence 的 goal / constraints 是否捕获到
+    # （借鉴 repo-harness contract-run runBriefPreflight：goal 空 = brief 不完整、reviewer 无从判方向）
+    # 克制取舍：唯一硬闸仍是 rejected（exit 1）；goal / falsifier / exit criteria 只强提示不阻断
+    # ——对齐「确定性才配硬拦、别过度 fail-closed」。goal 自动抽本就不稳，硬拦会误伤正常流程。
+    gm = re.search(r"### goal / constraints\n(.*?)(?=\n### |\n## |\Z)", text, re.S)
+    goal_missing = (gm is None) or ("未捕获" in gm.group(1)) or (not gm.group(1).strip())
+
+    if not empty and not goal_missing:
+        print("✓ Caller Declaration 已填写、goal 已捕获，可以发出")
         return 0
-    print("✗ Caller Declaration 未填字段：")
-    for e in empty:
-        print(f"  - {e}")
+    if goal_missing:
+        print("✗ brief：Objective Evidence 的 goal / constraints 未捕获——建议手动补一句目标（reviewer 判方向要用）。")
+    if empty:
+        print("✗ Caller Declaration 未填字段：")
+        for e in empty:
+            print(f"  - {e}")
     if any("rejected" in e for e in empty):
         print("→ rejected alternatives 空着 = 这套交接白做（实测结论）。先填再发。")
         return 1
-    print("→ 命门 rejected alternatives 已填；建议补齐其余字段再发。")
+    print("→ 命门 rejected alternatives 已填；goal / falsifier / exit criteria 建议补齐再发。")
     return 0
 
 
