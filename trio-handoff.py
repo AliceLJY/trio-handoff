@@ -628,6 +628,10 @@ def render(data, direction, src_path, sub_paths, diffs, statuses):
              "- claim X：高 / 已源码验证\n"
              "- claim Y：中 / 只 grep 了一处，未全量\n"
              "- claim Z：低 / 推论未验证，期待 reviewer 补 -->\n")
+    L.append("### without-review baseline　[v1.13·降级退路]\n"
+             "<!-- reviewer 不可用（僵死/看门狗止损/超时）时，我会按什么判断继续、承担什么风险。\n"
+             "有这栏，交接挂掉可引用它出单方结论、状态标 PARTIAL_EXEC，而不是整件事卡死。\n"
+             "空着只警告不阻断（对齐「确定性才配硬拦」）。源：OpenSquilla aggregator 单点无兜底教训（2026-07-09） -->\n")
     L.append("### falsifier / cheapest disproof　[v1.12·brief 完整性]\n"
              "<!-- 什么证据或最小实验能最快证明这个方向错了？先验证哪一步最便宜？对抗谄媚和方向跑偏。 -->\n")
     L.append("### exit criteria (machine-checkable)　[v1.12·brief 完整性]\n"
