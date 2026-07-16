@@ -49,6 +49,8 @@ import subprocess
 import sys
 from datetime import datetime
 
+__version__ = "2.5.0"
+
 # CC session 按 cwd 散落在 ~/.claude/projects/ 的不同子目录（全局聊在 -Users-<you>/，
 # repo 内会话在 -Users-<you>-Projects-<repo>/）——只盯一个子目录会系统性漏源。
 # TRIO_CC_DIR 兼容旧语义：可指向 projects 根，也可指向具体子目录（两层 glob 都扫）。
@@ -483,22 +485,53 @@ EXECUTION_BOUNDARY = (
 # ---------- 脱敏（移植自 constant alembic::redact, MIT；2026-06-08 借鉴审计）----------
 # 交接包会发给另一方 + 落 ~/Desktop/，diff / 命令输出 / remote url 都可能夹带 secret。
 # 顺序重要：具体 token 形状在前，通用 key=value 在后。
-# 接受 over-redaction：宁可黑掉合法的 a@b.com / "token: x"，也不把凭证带过边界（constant M4 取舍）。
+# 这是 best-effort 安全网而非完备 secret scanner；发出前仍须人工检查生成出的 bundle。
+# 接受 over-redaction：宁可黑掉合法的 a@b.com / "token: x"，也不把常见凭证带过边界。
 _REDACTORS = [
+    # 多行私钥必须先于逐行 / 通用规则处理。
+    (re.compile(
+        r"-----BEGIN (?P<label>[A-Z0-9 ]*PRIVATE KEY)-----.*?"
+        r"-----END (?P=label)-----",
+        re.S,
+    ), "[redacted-private-key]"),
+    # URL credentials must run before email redaction (password@host otherwise looks like an email).
+    (re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://)([^/\s:@]+):([^@\s/]+)@"),
+     r"\g<1>[redacted-user]:[redacted-password]@"),
     (re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"), "[redacted-email]"),
+    (re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b"), "[redacted-jwt]"),
+    (re.compile(r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b"), "[redacted-aws-key]"),
+    (re.compile(r"\bAIza[0-9A-Za-z_-]{30,50}\b"), "[redacted-google-key]"),
     (re.compile(r"\bsk-[A-Za-z0-9_-]{16,}\b"), "[redacted-key]"),
+    (re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}\b"), "[redacted-token]"),
     (re.compile(r"\bgh[pousr]_[A-Za-z0-9]{16,}\b"), "[redacted-token]"),
     (re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b"), "[redacted-token]"),
-    (re.compile(r"""(?i)(["']authorization["']\s*[:=]\s*["'])[^"']*(["'])"""), r"\g<1>[redacted]\g<2>"),
-    (re.compile(r"(?i)(\bauthorization\b\s*[:=]\s*).*"), r"\g<1>[redacted]"),
+    (re.compile(r"\b(?:xai-|jina_|npm_|hf_|glpat-)[A-Za-z0-9_-]{16,}\b"), "[redacted-token]"),
+    (re.compile(r"\b\d{8,12}:[A-Za-z0-9_-]{30,}\b"), "[redacted-bot-token]"),
     (re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]+"), "Bearer [redacted]"),
-    (re.compile(r"(?i)\b(api[_-]?key|token|secret|password|authorization|bearer)\b(\s*[:=]\s*)\S+"), r"\g<1>\g<2>[redacted]"),
+    # JSON / Python / shell quoted assignments, including provider-prefixed env names.
+    (re.compile(
+        r"(?i)([\"']?[A-Za-z][A-Za-z0-9_-]*"
+        r"(?:api[_-]?key|token|secret|password|authorization|bearer)"
+        r"[A-Za-z0-9_-]*[\"']?\s*[:=]\s*)([\"'])[^\"'\r\n]*\2"
+    ), r"\g<1>\g<2>[redacted]\g<2>"),
+    # Unquoted assignments and command-line flags are common in captured commands.
+    (re.compile(
+        r"(?i)(\b[A-Za-z][A-Za-z0-9_-]*"
+        r"(?:api[_-]?key|token|secret|password|authorization|bearer)"
+        r"[A-Za-z0-9_-]*\b\s*[:=]\s*)([^\s,;}\]]+)"
+    ), r"\g<1>[redacted]"),
+    (re.compile(
+        r"(?i)((?:--)[A-Za-z0-9_-]*"
+        r"(?:api[_-]?key|token|secret|password|authorization|bearer)"
+        r"[A-Za-z0-9_-]*\s+)(\S+)"
+    ), r"\g<1>[redacted]"),
+    (re.compile(r"(?i)(\bauthorization\b\s*:\s*).*"), r"\g<1>[redacted]"),
 ]
 
 
 def redact(text):
     """移植自 constant alembic::redact（思路源 inmzhang/transession, MIT）。
-    交接包跨边界发送 + 落盘，必须烧掉 secret；接受 over-redaction。"""
+    对常见凭证做 best-effort 脱敏；不是完备扫描器，发出前仍须检查 bundle。"""
     for pat, repl in _REDACTORS:
         text = pat.sub(repl, text)
     return text
@@ -794,6 +827,7 @@ def first_user_snippet(path, kind, limit=160):
 
 def main():
     ap = argparse.ArgumentParser(description="生成双向 trio 审稿交接包")
+    ap.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     ap.add_argument("source", nargs="?", help="源 jsonl（默认按方向取最近的）")
     ap.add_argument("--direction", choices=["cc-to-codex", "codex-to-cc"],
                     help="方向（默认从源自动检测，再默认 cc-to-codex）")

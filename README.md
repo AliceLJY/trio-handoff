@@ -2,7 +2,7 @@
 
 Bidirectional handoff bundles for two AI coding agents that review each other's work.
 
-Built for the **trio** workflow (one human + two agents — e.g. Claude Code and Codex), where the agents take turns reviewing each other. Works for any pair of file-system agents that keep a session log.
+Built for the **trio** workflow (one human + two agents — Claude Code and Codex), where the agents take turns reviewing each other. The bundle format is extensible, but this repository currently ships extractors only for Claude Code and Codex session logs.
 
 > **Scope note.** This repo publishes the *handoff bundle format and extractor*.
 > The full **trio protocol** itself (the CC + Codex + human triangulation workflow:
@@ -65,6 +65,12 @@ The bundle opens with a review instruction:
 
 > First verify the repo anchors (run the embedded verify commands — the docs may be stale, command output isn't). Then check the Caller Declaration — if it's still a blank template, bounce the bundle back instead of reviewing half a handoff. Then extract goal / evidence / rejected-alternatives / diff and review. Don't repeat suggestions already ruled out unless you can point to new evidence.
 
+## Security boundary
+
+Generated bundles apply best-effort redaction for common credentials, including private keys, JWTs, major provider-token shapes, credentialed URLs, authorization headers, and secret-like assignments. This is a safety net, **not a complete secret scanner**: inspect the generated bundle before sending it across a trust boundary.
+
+The source JSONL is never modified or copied into the bundle; the bundle contains only its local path as a drill-down pointer. Anyone who can open that original log may still see unredacted source data. Run `--check` for declaration completeness, then inspect the actual bundle for sensitive content before sharing it.
+
 ## Config
 
 | env | default |
@@ -80,10 +86,11 @@ Python 3.8+, standard library only.
 
 Two version tracks (they evolve independently):
 
-- **Tool release**: git tag, currently **v2.4.0** — extractor / CLI behavior.
-- **Bundle template**: currently **v1.11** — the bundle's section layout. Fields carry
+- **Tool release**: git tag, currently **v2.5.0** — extractor / CLI behavior.
+- **Bundle template**: currently **v1.13** — the bundle's section layout. Fields carry
   `[v1.x]` markers for the template version that introduced them (e.g. repo anchors'
-  verify lines are v1.11; runtime surfaces and confidence are v1.10).
+  verify lines are v1.11; falsifier and exit criteria are v1.12; the without-review
+  baseline is v1.13; runtime surfaces and confidence are v1.10).
 
 This repo publishes the handoff bundle format. The trio protocol itself
 (CC + Codex + human triangulation workflow) is maintained as a personal
