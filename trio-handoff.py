@@ -390,20 +390,33 @@ def collect_repos(changed, repo_arg, workdirs=None):
     return repos
 
 
-def git_diff(repo, base=None):
+class GitDiffError(RuntimeError):
+    """git diff 无法提供可信结果。"""
+
+
+def _run_git_diff(repo, args):
+    command = ["git", "-C", repo, "diff", *args]
     try:
-        parts = []
-        if base:
-            parts.append(subprocess.run(["git", "-C", repo, "diff", f"{base}...HEAD"],
-                                        capture_output=True, text=True, timeout=20).stdout)
-        parts.append(subprocess.run(["git", "-C", repo, "diff", "--staged"],
-                                    capture_output=True, text=True, timeout=20).stdout)
-        parts.append(subprocess.run(["git", "-C", repo, "diff"],
-                                    capture_output=True, text=True, timeout=20).stdout)
-        diff = "".join(parts).strip()
-        return diff[:MAX_DIFF] if diff else ""
-    except Exception:
-        return None
+        result = subprocess.run(command, capture_output=True, text=True, timeout=20)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise GitDiffError(f"运行 {shlex.join(command)} 失败: {exc}") from exc
+    if result.returncode != 0:
+        detail = clean_output(result.stderr or result.stdout, limit=500)
+        suffix = f": {detail}" if detail else ""
+        raise GitDiffError(
+            f"{shlex.join(command)} 失败 (exit {result.returncode}){suffix}"
+        )
+    return result.stdout
+
+
+def git_diff(repo, base=None):
+    parts = []
+    if base:
+        parts.append(_run_git_diff(repo, [f"{base}...HEAD"]))
+    parts.append(_run_git_diff(repo, ["--staged"]))
+    parts.append(_run_git_diff(repo, []))
+    diff = "".join(parts).strip()
+    return diff[:MAX_DIFF] if diff else ""
 
 
 def git_status(repo):
@@ -894,7 +907,10 @@ def main():
 
     # 3) repo 信息（多 repo + workdir 兜底 + cwd fallback + 可选 base）
     repos = collect_repos(data["changed"], args.repo, data.get("workdirs"))
-    diffs = [(r, git_diff(r, args.base)) for r in repos]
+    try:
+        diffs = [(r, git_diff(r, args.base)) for r in repos]
+    except GitDiffError as e:
+        ap.error(str(e))
     statuses = [(r, git_status(r)) for r in repos]
 
     # 4) 渲染 + 写出
