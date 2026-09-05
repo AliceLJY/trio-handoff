@@ -6,8 +6,7 @@
 
 > **范围说明。** 本仓库发布的是*交接包格式与抽取器*。
 > 完整的 **trio 协议**(CC + Codex + 人三角制衡的协作流程:反向产品经理、
-> 盲点扫描、谁写 / 谁审的路由)作为个人 skill 独立维护在
-> `~/.claude/skills/trio/`,不在本仓库内。
+> 盲点扫描、谁写 / 谁审的路由)作为个人 skill 独立维护,不在本仓库内。
 
 ## 为什么需要
 
@@ -92,7 +91,7 @@ Python 3.8+,仅标准库。
   without-review baseline 是 v1.13;runtime surfaces 和 confidence 是 v1.10)。
 
 本仓库发布的是交接包格式。trio 协议本身(CC + Codex + 人三角制衡的协作流程)
-作为个人 skill 独立维护在 `~/.claude/skills/trio/`。
+作为个人 skill 独立维护,不在本仓库内。
 
 ## 许可
 

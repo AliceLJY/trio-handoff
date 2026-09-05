@@ -6,8 +6,8 @@ Built for the **trio** workflow (one human + two agents — Claude Code and Code
 
 > **Scope note.** This repo publishes the *handoff bundle format and extractor*.
 > The full **trio protocol** itself (the CC + Codex + human triangulation workflow:
-> reverse-PM, blind-spot scanning, who-writes / who-reviews routing) is maintained
-> separately as a personal skill at `~/.claude/skills/trio/` — not in this repo.
+> reverse-PM, blind-spot scanning, who-writes / who-reviews routing) is
+> maintained separately as a personal skill (not in this repo).
 
 ## Why
 
@@ -93,8 +93,8 @@ Two version tracks (they evolve independently):
   baseline is v1.13; runtime surfaces and confidence are v1.10).
 
 This repo publishes the handoff bundle format. The trio protocol itself
-(CC + Codex + human triangulation workflow) is maintained as a personal
-skill at `~/.claude/skills/trio/`.
+(CC + Codex + human triangulation workflow) is maintained separately as
+a personal skill (not in this repo).
 
 ## License
 
