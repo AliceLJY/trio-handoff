@@ -342,7 +342,7 @@ def parse_codex(rows, origin="codex"):
             elif name in CODEX_PATCH:
                 out["changed"].extend(_patch_files(args) or ["(apply_patch)"])
             else:
-                # duo / RecallNest / write_stdin 等 → 外部工具证据，不混进 files examined
+                # MCP 工具 / write_stdin 等 → 外部工具证据，不混进 files examined
                 out["external"].append(
                     f"{name}: {json.dumps(args, ensure_ascii=False)[:80]}")
     return out

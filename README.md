@@ -2,12 +2,13 @@
 
 Bidirectional handoff bundles for two AI coding agents that review each other's work.
 
-Built for the **trio** workflow (one human + two agents — Claude Code and Codex), where the agents take turns reviewing each other. The bundle format is extensible, but this repository currently ships extractors only for Claude Code and Codex session logs.
+> **Status:** feature-frozen · last verified 2026-10. The author stopped using the trio workflow in October 2026. The bundle format and extractors stay here as they are and issues are still read, but no new features are planned.
 
-> **Scope note.** This repo publishes the *handoff bundle format and extractor*.
-> The full **trio protocol** itself (the CC + Codex + human triangulation workflow:
-> reverse-PM, blind-spot scanning, who-writes / who-reviews routing) is
-> maintained separately as a personal skill (not in this repo).
+When one agent hands its work to another for review, the reviewer usually gets a diff and a one-line summary, so it keeps re-suggesting approaches the author already ruled out. trio-handoff builds a review bundle instead: evidence auto-extracted from the author agent's own session log, plus a short declaration of what was rejected and why.
+
+It was built for the **trio** workflow (one human + two agents taking turns reviewing each other). The two extractors that ship today read **Claude Code** and **Codex** session logs. The output is a plain Markdown file, so the `cc-to-codex` bundle can be handed to any reviewer — another model, another tool, or a person.
+
+> **Scope note.** This repo contains the handoff bundle format and the extractors, and that is all you need to use them. The trio protocol that used to route who writes and who reviews was a personal workflow and is no longer in use.
 
 ## Why
 
@@ -92,9 +93,9 @@ Two version tracks (they evolve independently):
   verify lines are v1.11; falsifier and exit criteria are v1.12; the without-review
   baseline is v1.13; runtime surfaces and confidence are v1.10).
 
-This repo publishes the handoff bundle format. The trio protocol itself
-(CC + Codex + human triangulation workflow) is maintained separately as
-a personal skill (not in this repo).
+This repo publishes the handoff bundle format and its extractors. The trio
+protocol that once drove it (a personal Claude Code + Codex + human review
+routine) has been retired and is not published.
 
 ## License
 
