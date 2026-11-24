@@ -918,6 +918,9 @@ def main():
     tag = "cc2cx" if direction == "cc-to-codex" else "cx2cc"
     out = (os.path.expanduser(args.out) if args.out else
            os.path.expanduser(f"~/Desktop/trio-handoff-{tag}-{datetime.now():%H%M%S}.md"))
+    out_dir = os.path.dirname(os.path.abspath(out))
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
     with open(out, "w") as fh:
         fh.write(md)
     has_diff = any(d for _, d in diffs)
