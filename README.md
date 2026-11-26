@@ -45,6 +45,15 @@ Same bundle structure; only the extractor differs — because the two agents obs
 
 ## Usage
 
+Get the script first (no install step, standard library only):
+
+```bash
+git clone https://github.com/AliceLJY/trio-handoff.git
+cd trio-handoff
+```
+
+Then run it from that directory:
+
 ```bash
 ./trio-handoff.py                          # latest Claude session -> bundle for Codex
 ./trio-handoff.py --direction codex-to-cc  # latest Codex rollout -> bundle for CC
@@ -60,7 +69,7 @@ Same bundle structure; only the extractor differs — because the two agents obs
 
 "Latest session" is picked by the **timestamp inside the JSONL**, not file mtime (bridge/patch processes batch-refresh mtimes, making them a lottery), and Claude sessions are searched across **all** `~/.claude/projects/*/` subdirectories (sessions scatter by cwd). After picking, the tool prints the session's first user message so you can eyeball that it grabbed the right one — if not, rerun with an explicit source path. If extraction yields nothing (wrong source, format drift), the tool refuses to emit a hollow bundle.
 
-Output is a Markdown bundle (default in `~/Desktop/`). **Fill in the Caller Declaration before sending**, then run `--check` on the bundle — it exits non-zero while `rejected alternatives` is still blank. Hand the path to the reviewing agent — it reads the bundle for guidance and can drill down into the raw log path at the bottom to verify any claim, so it never has to trust the compression blindly.
+Output is a Markdown bundle (default in `~/Desktop/`, created if missing). The terminal messages, `--help` text and the bundle body are written in Chinese; the section names (Objective Evidence, Caller Declaration, field names) stay in English. **Fill in the Caller Declaration before sending**, then run `--check` on the bundle — it exits non-zero while `rejected alternatives` is still blank. Hand the path to the reviewing agent — it reads the bundle for guidance and can drill down into the raw log path at the bottom to verify any claim, so it never has to trust the compression blindly.
 
 The bundle opens with a review instruction:
 

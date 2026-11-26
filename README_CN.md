@@ -45,6 +45,15 @@ Claude 的 `thinking` 和 Codex 的 `reasoning` 按设计排除。隐藏的思�
 
 ## 用法
 
+先拿到脚本(不用安装,只用标准库):
+
+```bash
+git clone https://github.com/AliceLJY/trio-handoff.git
+cd trio-handoff
+```
+
+然后在这个目录里运行:
+
 ```bash
 ./trio-handoff.py                          # 最近的 Claude 会话 -> 给 Codex 的包
 ./trio-handoff.py --direction codex-to-cc  # 最近的 Codex rollout -> 给 CC 的包
@@ -60,7 +69,7 @@ Claude 的 `thinking` 和 Codex 的 `reasoning` 按设计排除。隐藏的思�
 
 "最近的会话"按 **JSONL 内部时间戳**选取而不是文件 mtime(bridge / patch 进程会批量刷新 mtime,让 mtime 排序退化成抽签),且 Claude 会话扫描覆盖 `~/.claude/projects/*/` **全部**子目录(session 按 cwd 散落)。选源后会打印该会话的首条用户输入,让你一眼核对抓对了没有——不对就显式传 source 路径重跑。抽取结果为空时(选错源 / 格式漂移)拒绝生成空壳包。
 
-输出是一个 Markdown 交接包(默认在 `~/Desktop/`)。**发出去之前先填好 Caller Declaration**,然后对包跑一次 `--check`——`rejected alternatives` 还空着时它会以非零码退出。把路径交给负责 review 的 agent——它读这个包作为导览,也能下钻到文末的原始日志路径核实任何一条,不必盲信压缩。
+输出是一个 Markdown 交接包(默认在 `~/Desktop/`,目录不存在会自动建)。终端提示、`--help` 和交接包正文都是中文;段落名(Objective Evidence、Caller Declaration 和各字段名)保留英文。**发出去之前先填好 Caller Declaration**,然后对包跑一次 `--check`——`rejected alternatives` 还空着时它会以非零码退出。把路径交给负责 review 的 agent——它读这个包作为导览,也能下钻到文末的原始日志路径核实任何一条,不必盲信压缩。
 
 交接包开头带一句 review 指令:
 
